@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>震央分布(USGS)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #map {
+            flex: 1;
+        }
+
+        #controls, #map-controls {
+            padding: 10px;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        #map-controls {
+            position: absolute;
+            bottom: 60px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        #map-controls button, #map-controls select {
+            background: none;
+            border: none;
+            color: #333;
+            padding: 5px;
+            cursor: pointer;
+        }
+
+        #map-controls button:hover, #map-controls select:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        #map-controls button {
+            color: #ddd;
+        }
+
+        #map-controls select {
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label for="starttime">開始日時: </label>
+        <input type="date" id="starttime">
+        <label for="endtime">終了日時: </label>
+        <input type="date" id="endtime">
+        <button id="updateMap">地図を更新</button>
+    </div>
+    <div id="map"></div>
+    <div id="map-controls">
+        <button id="nationalCenter">全国中心</button>
+        <button id="plotCenter">プロット中心</button>
+        <select id="regionSelect">
+            <option value="">地方を選択</option>
+            <option value="hokkaido">北海道</option>
+            <option value="tohoku">東北</option>
+            <option value="kanto">関東</option>
+            <option value="chubu">中部</option>
+            <option value="kinki">近畿</option>
+            <option value="chugoku">中国</option>
+            <option value="shikoku">四国</option>
+            <option value="kyushu">九州</option>
+            <option value="okinawa">沖縄</option>
+        </select>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        const map = L.map('map').setView([36.2048, 138.2529], 5); // 日本の中心を設定
+        const earthquakeLayer = L.layerGroup(); // 震央レイヤーを初期化
+        const faultLayer = L.layerGroup(); // 活断層レイヤーを初期化
+        const plateLayer = L.layerGroup(); // プレートレイヤーを初期化
+        const regionLayer = L.layerGroup().addTo(map); // 地方レイヤーを初期化
+
+        const regions = {
+            hokkaido: {center: [43.0642, 141.3468], zoom: 7, bounds: [[41.4, 139.3], [45.6, 145.8]]},
+            tohoku: {center: [38.2682, 140.8694], zoom: 7, bounds: [[36.0, 138.0], [41.0, 142.0]]},
+            kanto: {center: [35.6895, 139.6917], zoom: 8, bounds: [[34.9, 138.5], [37.0, 140.9]]},
+            chubu: {center: [36.2048, 137.2529], zoom: 8, bounds: [[35.0, 136.0], [37.5, 138.5]]},
+            kinki: {center: [34.6913, 135.1830], zoom: 8, bounds: [[34.0, 134.0], [35.5, 136.5]]},
+            chugoku: {center: [34.3963, 132.4596], zoom: 8, bounds: [[33.5, 131.0], [35.5, 134.0]]},
+            shikoku: {center: [33.8398, 134.6939], zoom: 8, bounds: [[33.0, 133.0], [34.7, 136.0]]},
+            kyushu: {center: [31.5965, 130.5571], zoom: 8, bounds: [[30.0, 128.0], [33.0, 132.0]]},
+            okinawa: {center: [26.2124, 127.6809], zoom: 9, bounds: [[25.5, 126.0], [27.0, 129.0]]}
+        };
+
+        // 深さによる色の変更
+        function getColorByDepth(depth) {
+            return depth > 300 ? '#0000FF' : // 深い（青）
+                   depth > 200 ? '#4B0082' :
+                   depth > 100 ? '#8A2BE2' :
+                   depth > 50  ? '#9370DB' :
+                   depth > 20  ? '#BA55D3' :
+                   depth > 10  ? '#FF69B4' : // 浅い（赤）
+                                 '#FF4500';
+        }
+
+        // USGSの地震データを取得する関数
+        async function fetchEarthquakeData(starttime, endtime) {
+            const url = `https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=${starttime}&endtime=${endtime}&minlatitude=24&maxlatitude=46&minlongitude=122&maxlongitude=153`;
+            try {
+                const response = await axios.get(url);
+                return response.data.features;
+            } catch (error) {
+                console.error('Error fetching earthquake data:', error);
+                return []; // エラーが発生した場合は空の配列を返す
+            }
+        }
+
+        // 震央レイヤーをマップに追加する関数
+        function addEarthquakesToMap(earthquakes) {
+            earthquakeLayer.clearLayers(); // 既存の地震マーカーをクリア
+            earthquakes.forEach(earthquake => {
+                const coords = [earthquake.geometry.coordinates[1], earthquake.geometry.coordinates[0]];
+                const depth = earthquake.geometry.coordinates[2];
+                const magnitude = earthquake.properties.mag;
+                const place = earthquake.properties.place;
+                const time = new Date(earthquake.properties.time).toLocaleString();
+                const color = getColorByDepth(depth);
+
+                const marker = L.circleMarker(coords, {
+                    radius: magnitude * 2, // 規模に応じて円のサイズを設定
+                    fillColor: color,
+                    color: "#000",
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                }).addTo(earthquakeLayer);
+
+                marker.bindTooltip(`<strong>場所:</strong> ${place}<br><strong>マグニチュード:</strong> ${magnitude}<br><strong>発生日時:</strong> ${time}<br><strong>深さ:</strong> ${depth} km`, {
+                    permanent: false, // ツールチップがホバー時のみ表示されるように設定
+                    direction: 'top'
+                }).on('mouseover', function (e) {
+                    this.openTooltip(); // マウスホバー時にツールチップを表示
+                }).on('mouseout', function (e) {
+                    this.closeTooltip();
+                });
+            });
+        }
+
+        // 活断層データを手動で追加
+        const faults = [
+            // ここに活断層の座標を追加
+            // 例: [[緯度1, 経度1], [緯度2, 経度2], ...]
+            [[35.6895, 139.6917], [35.6828, 139.759], [35.6895, 139.7001]]
+        ];
+
+        faults.forEach(fault => {
+            L.polyline(fault, { color: 'red' }).addTo(faultLayer);
+        });
+
+        // プレートデータを手動で追加
+        const plates = [
+            // ここにプレートの座標を追加
+            // 例: [[緯度1, 経度1], [緯度2, 経度2], ...]
+            [[20.0, 140.0], [20.0, 150.0], [30.0, 150.0], [30.0, 140.0], [20.0, 140.0]]
+        ];
+
+        plates.forEach(plate => {
+            L.polygon(plate, { color: 'blue', fillOpacity: 0.3 }).addTo(plateLayer);
+        });
+
+        // 期間を設定してデータを取得し、地図を更新
+        function updateMap() {
+            const starttime = document.getElementById('starttime').value || new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
+            const endtime = document.getElementById('endtime').value || new Date().toISOString().split('T')[0];
+
+            fetchEarthquakeData(starttime, endtime)
+                .then(earthquakes => {
+                    addEarthquakesToMap(earthquakes);
+                })
+                .catch(error => {
+                    console.error('Error updating map:', error);
+                });
+        }
+
+        // 初回ロード時に過去30日間の地震データを表示
+        updateMap();
+
+        // ボタンをクリックして地図を更新
+        document.getElementById('updateMap').addEventListener('click', updateMap);
+
+        // 全国中心ボタンをクリックしたときの処理
+        document.getElementById('nationalCenter').addEventListener('click', () => {
+            map.flyTo([36.2048, 138.2529], 5);
+        });
+
+        // プロット中心ボタンをクリックしたときの処理
+        document.getElementById('plotCenter').addEventListener('click', () => {
+            let latSum = 0, lngSum = 0, count = 0;
+            const latLngs = [];
+            earthquakeLayer.eachLayer(layer => {
+                latLngs.push(layer.getLatLng());
+                latSum += layer.getLatLng().lat;
+                lngSum += layer.getLatLng().lng;
+                count++;
+            });
+            if (count > 0) {
+                const bounds = L.latLngBounds(latLngs);
+                map.flyToBounds(bounds);
+            }
+        });
+
+        // 地方選択のプルダウンが変更されたときの処理
+        document.getElementById('regionSelect').addEventListener('change', (event) => {
+            const region = event.target.value;
+            if (region && regions[region]) {
+                map.flyTo(regions[region].center, regions[region].zoom);
+                const bounds = regions[region].bounds;
+      
+                let visible = true;
+                const interval = setInterval(() => {
+                    if (visible) {
+                        map.removeLayer(regionPolygon);
+                    } else {
+                        regionPolygon.addTo(map);
+                    }
+                    visible = !visible;
+                }, 700);
+
+                setTimeout(() => {
+                    clearInterval(interval);
+                    map.removeLayer(regionPolygon);
+                }, 3000);
+            }
+        });
+
+        // CARTOダークベースマップの定義
+        const cartoDarkBasemap = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://carto.com/">CARTO</a>'
+        });
+
+        // 地図のレイヤーを追加
+        const baseLayers = {
+            "CARTO Dark": cartoDarkBasemap
+        };
+
+        const overlays = {
+            "震央表示": earthquakeLayer,
+            "活断層": faultLayer,
+            "プレート": plateLayer
+        };
+
+        // Layer Controlを追加
+        L.control.layers(baseLayers, overlays, {collapsed: true}).addTo(map);
+
+        // ベースマップとオーバーレイレイヤーをマップに追加
+        cartoDarkBasemap.addTo(map);
+        earthquakeLayer.addTo(map);
+    </script>
+</body>
+</html>
