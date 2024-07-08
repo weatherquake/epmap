@@ -51,6 +51,18 @@
         #map-controls select {
             color: #000;
         }
+
+        #map-title {
+            position: absolute;
+            top: 50px; /* 少し下に */
+            left: 0; /* 左にピタッとくっつける */
+            z-index: 1000;
+        }
+
+        #map-title img {
+            width: 220px; /* ほんの少し大きく */
+            margin-left: 0; /* 地図の左端から少し内側に */
+        }
     </style>
 </head>
 <body>
@@ -78,12 +90,17 @@
             <option value="okinawa">沖縄</option>
         </select>
     </div>
+    <div id="map-title">
+        <img src="EpMapTitle.png" alt="Map Title">
+    </div>
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script>
-        const map = L.map('map').setView([36.2048, 138.2529], 5); // 日本の中心を設定
+        const map = L.map('map', {
+            zoomControl: false // ここで拡大縮小ボタンを無効にする
+        }).setView([36.2048, 138.2529], 5); // 日本の中心を設定
         const earthquakeLayer = L.layerGroup(); // 震央レイヤーを初期化
         const faultLayer = L.layerGroup(); // 活断層レイヤーを初期化
         const plateLayer = L.layerGroup(); // プレートレイヤーを初期化
@@ -264,6 +281,28 @@
         // ベースマップとオーバーレイレイヤーをマップに追加
         cartoDarkBasemap.addTo(map);
         earthquakeLayer.addTo(map);
+
+        // Ctrl+0で日時設定の表示/非表示を切り替える
+        document.addEventListener('keydown', function (event) {
+            if (event.ctrlKey && event.key === '0') {
+                const controls = document.getElementById('controls');
+                if (controls.style.display === 'none') {
+                    controls.style.display = 'block';
+                } else {
+                    controls.style.display = 'none';
+                }
+            }
+
+            // Ctrl+1で地図コントロールの表示/非表示を切り替える
+            if (event.ctrlKey && event.key === '1') {
+                const mapControls = document.getElementById('map-controls');
+                if (mapControls.style.display === 'none') {
+                    mapControls.style.display = 'block';
+                } else {
+                    mapControls.style.display = 'none';
+                }
+            }
+        });
     </script>
 </body>
 </html>
